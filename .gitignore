@@ -1,0 +1,27 @@
+# --- Fisiere generate de Flex si Bison ---
+lex.yy.c
+*.tab.c
+*.tab.h
+*.output
+
+# --- Executabilul final si alte binare ---
+# Numele dat in compile.sh
+compilator
+# Alte variante posibile de executabile
+*.exe
+*.out
+a.out
+
+# --- Fisiere obiect (intermediare C++) ---
+*.o
+*.obj
+
+# --- Editor (VS Code) si Sistem ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Fisiere de iesire ---
+tables.txt

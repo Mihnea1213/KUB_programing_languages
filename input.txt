@@ -1,0 +1,33 @@
+PEPESSACK DogeCoin {
+    WIGGLY price;
+    BOI quantity;
+
+    BLACK toTheMoon() {
+        price = 100.5;
+        YEET 0;
+    }
+};
+
+BOI computeProfit(WIGGLY stonks) {
+    BOI multiplier = 10;
+    
+    DIDDLER (multiplier > 0) {
+        SHOUT("Holding...");
+        multiplier = multiplier - 1;
+    }
+    
+    YEET multiplier;
+}
+
+BOI THE_OP() {
+    SHOUT("KUB Language Initialized");
+    
+    KIRKCHECK (BASED) {
+        SHOUT("We are based");
+    } FINOKOREAN {
+        SHOUT("This is cringe");
+    }
+
+    computeProfit(420.69);
+    YEET 0;
+}
