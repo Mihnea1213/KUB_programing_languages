@@ -1,33 +1,47 @@
+/* Definim clasa DogeCoin */
 PEPESSACK DogeCoin {
     WIGGLY price;
     BOI quantity;
-
-    BLACK toTheMoon() {
-        price = 100.5;
+    
+    BLACK bark() {
         YEET 0;
     }
 };
 
-BOI computeProfit(WIGGLY stonks) {
-    BOI multiplier = 10;
+BOI testAdvanced() {
+    DogeCoin d;
+    d.price = 100.5; /* Corect */
     
-    DIDDLER (multiplier > 0) {
-        SHOUT("Holding...");
-        multiplier = multiplier - 1;
-    }
+    /* TEST 1: Acces membru gresit */
+    d.fakeField = 10; /* Eroare: no member */
     
-    YEET multiplier;
+    /* TEST 2: Tip gresit la membru */
+    d.quantity = 50.5; /* Eroare: assign WIGGLY to BOI */
+
+    d.bark(); /* Ar trebui sa mearga */
+    
+    /* TEST GRESIT: Metoda inexistenta */
+    d.meow(); /* Ar trebui sa dea eroare: Method 'meow' not defined */
+
+    YEET 0;
+}
+
+BOI compute(BOI x, WIGGLY y) {
+    YEET x;
 }
 
 BOI THE_OP() {
-    SHOUT("KUB Language Initialized");
+    SHOUT("Advanced Tests...");
     
-    KIRKCHECK (BASED) {
-        SHOUT("We are based");
-    } FINOKOREAN {
-        SHOUT("This is cringe");
-    }
+    /* TEST 3: Apel corect */
+    compute(10, 20.5);
+    
+    /* TEST 4: Nr gresit argumente */
+    compute(10); 
+    
+    /* TEST 5: Tip gresit argumente */
+    compute(10, "text");
 
-    computeProfit(420.69);
+    testAdvanced();
     YEET 0;
 }

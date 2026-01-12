@@ -3,6 +3,7 @@
 #include <map>
 #include <vector>
 #include <fstream>
+#include <algorithm>
 
 using namespace std;
 
@@ -15,6 +16,7 @@ struct SymbolInfo
     string value; //Valoarea
     string scopeCategory; //"variable", "function", "class_member", "parameter"
     int size; //Pentru array-uri sau dimensiune tip
+    vector<string> paramTypes; //Lista de tipuri a parametrilor (doar pentru functii)
 
     //Constructor gol
     SymbolInfo() : name(""), type(""), value(""), scopeCategory(""), size(0) {}
@@ -53,8 +55,22 @@ public:
         return true;
     }
 
+    //Functie care adauga un simbol dar ii si seteaza parametrii
+    //Folosita cand definim functii
+    bool addFunctionSymbol(string name, string type, vector<string> params)
+    {
+        if(symbols.find(name) != symbols.end())
+        {
+            return false;
+        }
+        SymbolInfo info(name,type, "", "function");
+        info.paramTypes = params; //Salvam semnatura functiei
+        symbols.insert({name, info});
+        return true;
+    }
+
     //Cauta un simbol. Daca nu e aici, cautam recursiv in parinte
-    SymbolInfo* findSymbool(string name)
+    SymbolInfo* findSymbol(string name)
     {
         //Cautam unde suntem initial
         if (symbols.find(name)!= symbols.end())
@@ -65,10 +81,21 @@ public:
         //Daca nu il gasim si avem parinte, cautam in el
         if (parent != nullptr)
         {
-            return parent->findSymbool(name);
+            return parent->findSymbol(name);
         }
 
         //Nu exista
+        return nullptr;
+    }
+
+    //Cautam un simbol DOAR in tabelul curent (fara parinti)
+    //Util pentru verificarea membrilor clasei (d.x -> x trebuie sa fie fix in clasa aia)
+    SymbolInfo* findSymbolLocal (string name)
+    {
+        if (symbols.find(name)!= symbols.end())
+        {
+            return &symbols[name];
+        }
         return nullptr;
     }
 
@@ -88,7 +115,19 @@ public:
         {
             out << indent << " [Name: " << val.name
                 << ", Type: " << val.type
-                << ", Cat: " <<val.scopeCategory << "]" << endl;
+                << ", Cat: " <<val.scopeCategory;
+
+            //Afisama si parametrii daca e functie
+            if(val.scopeCategory == "function" && !val.paramTypes.empty())
+            {
+                out << ", Params: (";
+                for(size_t i = 0 ; i < val.paramTypes.size(); i++)
+                {
+                    out << val.paramTypes[i] << (i<val.paramTypes.size()-1 ? ", " : "");
+                }
+                out << ")";
+            }
+            out << "]" << endl;
         }
         out << endl;
 
@@ -129,6 +168,11 @@ public:
         currentScope = newScope; //Ne mutam in el
     }
 
+    SymbolInfo* getSymbol(string name)
+    {
+        return currentScope->findSymbol(name);
+    }
+
     //Cand iesim din bloc (})
     void exitScope() {
         if (currentScope->parent != nullptr)
@@ -143,10 +187,44 @@ public:
         return currentScope->addSymbol(name, type, category);
     }
 
+    //Wrapper pentru declararea functiilor cu parametrii
+    bool declareFunction(string name, string type, vector<string> params)
+    {
+        return currentScope->addFunctionSymbol(name,type,params);
+    }
+
+    //Metoda pentru a actualiza parametrii unei functii deja declarate
+    void updateFunctionParams(string name, vector<string> params)
+    {
+        //FUnctia este in scope-ul PARINTE, nu in scope-ul propriu
+        SymbolTable* searchScope = currentScope->parent;
+        if(searchScope)
+        {
+            auto it = searchScope->symbols.find(name);
+            if(it != searchScope->symbols.end())
+            {
+                it->second.paramTypes = params;
+            }
+        }
+    }
+
     //Verificam daca o variabila exista
     bool exists(string name)
     {
-        return currentScope->findSymbool(name) != nullptr;
+        return currentScope->findSymbol(name) != nullptr;
+    }
+    //Gaseste scope-ul unei clase dupa nume
+    SymbolTable* findClassScope(string className)
+    {
+        //Cautam in copiii scope-ului global
+        for(auto child : globalScope->children)
+        {
+            if(child->scopeName == className)
+            {
+                return child;
+            }
+        }
+        return nullptr;
     }
 
     void printAllTables(string filename)

@@ -43,6 +43,7 @@
 [0-9]*\.[0-9]+    { return VAL_FLOAT; }
 \"[^\"]*\"        { return VAL_STRING; }
 
+"/*"([^*]|\*+[^*/])*\*+"/"   ;  /* Regula pentru a ignora comentarii de tip C: / ... / */
 [ \t\n]+          ; /* Ignora spatiile */
 .                 { return yytext[0]; } /* Returneaza ; { } ( ) = etc */
 
