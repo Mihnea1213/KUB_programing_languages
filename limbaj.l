@@ -34,7 +34,9 @@
 "||"              { return OP_OR; }
 
 [a-zA-Z_][a-zA-Z0-9_]* { 
-    return ID; 
+    //Salvam textul (numele variabilei) ca sa il folosim in Bison.
+    yylval.str_val = strdup(yytext);
+    return ID;
 }
 
 [0-9]+            { return VAL_INT; }
