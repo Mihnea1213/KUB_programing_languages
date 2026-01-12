@@ -1,3 +1,6 @@
+#ifndef SYMTABLE_H
+#define SYMTABLE_H
+
 #include <iostream>
 #include <string>
 #include <map>
@@ -9,6 +12,9 @@ using namespace std;
 
 //Structura unui SIMBOL
 //Tinem mintre tot ce stim despre o variabila sau functie
+
+class ASTNode;
+
 struct SymbolInfo
 {
     string name; //Numele("x","var")
@@ -18,6 +24,8 @@ struct SymbolInfo
     int size; //Pentru array-uri sau dimensiune tip
     vector<string> paramTypes; //Lista de tipuri a parametrilor (doar pentru functii)
 
+    vector<ASTNode*>* funcBody = nullptr;
+    
     //Constructor gol
     SymbolInfo() : name(""), type(""), value(""), scopeCategory(""), size(0) {}
 
@@ -115,7 +123,8 @@ public:
         {
             out << indent << " [Name: " << val.name
                 << ", Type: " << val.type
-                << ", Cat: " <<val.scopeCategory;
+                << ", Cat: " <<val.scopeCategory
+                << ", Val: " << val.value; // Step IV: print value too for debugging
 
             //Afisama si parametrii daca e functie
             if(val.scopeCategory == "function" && !val.paramTypes.empty())
@@ -237,3 +246,5 @@ public:
         }
     }
 };
+
+#endif

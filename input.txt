@@ -1,47 +1,65 @@
-/* Definim clasa DogeCoin */
-PEPESSACK DogeCoin {
-    WIGGLY price;
-    BOI quantity;
+/* Helper function to test local variables and assignments 
+   (Since variables cannot be declared directly in THE_OP/Main) 
+*/
+BOI test_calculations() {
+    BOI a;
+    a = 10;
+    BOI b;
+    b = 5;
     
-    BLACK bark() {
-        YEET 0;
-    }
-};
-
-BOI testAdvanced() {
-    DogeCoin d;
-    d.price = 100.5; /* Corect */
+    SHOUT("Testing Variables (10 and 5):");
     
-    /* TEST 1: Acces membru gresit */
-    d.fakeField = 10; /* Eroare: no member */
+    /* Test Addition */
+    SHOUT(a + b); 
     
-    /* TEST 2: Tip gresit la membru */
-    d.quantity = 50.5; /* Eroare: assign WIGGLY to BOI */
-
-    d.bark(); /* Ar trebui sa mearga */
+    /* Test Multiplication */
+    SHOUT(a * b);
     
-    /* TEST GRESIT: Metoda inexistenta */
-    d.meow(); /* Ar trebui sa dea eroare: Method 'meow' not defined */
-
+    /* Test Complex Math: 10 + 5 * 2 = 20 */
+    SHOUT(a + b * 2);
+    
+    /* Test Floating Point */
+    WIGGLY f;
+    f = 5.5;
+    SHOUT(f + 4.5);
+    
     YEET 0;
 }
 
-BOI compute(BOI x, WIGGLY y) {
-    YEET x;
+BOI test_logic() {
+    TRUTHMODE t;
+    TRUTHMODE f;
+    t = BASED;
+    f = CRINGE;
+    
+    SHOUT("Testing Logic (BASED/CRINGE):");
+    
+    /* Test OR (expect BASED) */
+    SHOUT(t || f);
+    
+    /* Test AND (expect CRINGE) */
+    SHOUT(t && f);
+    
+    /* Test Relational (10 > 5) */
+    SHOUT(10 > 5);
+    
+    YEET 0;
 }
 
+/* Main Block - Entry Point */
 BOI THE_OP() {
-    SHOUT("Advanced Tests...");
-    
-    /* TEST 3: Apel corect */
-    compute(10, 20.5);
-    
-    /* TEST 4: Nr gresit argumente */
-    compute(10); 
-    
-    /* TEST 5: Tip gresit argumente */
-    compute(10, "text");
+    SHOUT("=== START STEP 4 TEST ===");
 
-    testAdvanced();
+    /* 1. Test Literals & Priority in Main */
+    SHOUT("1. Literals & Priority:");
+    SHOUT(2 + 2 * 10);      /* Expect 22 */
+    SHOUT((2 + 2) * 10);    /* Expect 40 */
+    SHOUT(100 / 2 - 10);    /* Expect 40 */
+
+    /* 2. Test Function Calls & Assignments */
+    test_calculations();
+    test_logic();
+
+    SHOUT("=== TEST COMPLETE ===");
     YEET 0;
 }
