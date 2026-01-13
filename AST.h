@@ -8,6 +8,9 @@
 
 using namespace std;
 
+// Forward declaration
+class SymbolTableManager;
+
 // Wrapper class for values
 struct WrapperValue {
     string type; // "BOI", "WIGGLY", "YAP", "TRUTHMODE", "BLACK"
@@ -15,8 +18,9 @@ struct WrapperValue {
     float floatVal = 0.0;
     string strVal = "";
     bool boolVal = false;
+    bool isReturn = false;  // NEW: Flag to indicate a return statement was executed
 
-    WrapperValue() : type("BLACK") {}
+    WrapperValue() : type("BLACK"), isReturn(false) {}
     
     // Helpers for easy creation
     static WrapperValue createInt(int v) { WrapperValue w; w.type="BOI"; w.intVal=v; return w; }
@@ -24,7 +28,7 @@ struct WrapperValue {
     static WrapperValue createString(string v) { WrapperValue w; w.type="YAP"; w.strVal=v; return w; }
     static WrapperValue createBool(bool v) { WrapperValue w; w.type="TRUTHMODE"; w.boolVal=v; return w; }
     
-    // Helper to get default value for a type (used for OTHER nodes)
+    // Helper to get default value for a type
     static WrapperValue createDefault(string t) {
         WrapperValue w;
         w.type = t;
@@ -66,7 +70,7 @@ public:
     WrapperValue eval(SymbolTableManager* mgr) override {
         // Look up value in SymbolTable
         SymbolInfo* s = mgr->getSymbol(name);
-        if (!s) return WrapperValue(); // Should not happen if semantic check passed
+        if (!s) return WrapperValue();
         
         WrapperValue w;
         w.type = dataType;
@@ -80,7 +84,69 @@ public:
     }
 };
 
-// --- Node for "Other" (Function calls, etc.) ---
+// --- Node for Field Access (obj.field) ---
+class FieldAccessNode : public ASTNode {
+    string objName;
+    string fieldName;
+public:
+    FieldAccessNode(string obj, string field, string t) : objName(obj), fieldName(field) { 
+        dataType = t; 
+    }
+    
+    WrapperValue eval(SymbolTableManager* mgr) override {
+        SymbolInfo* obj = mgr->getSymbol(objName);
+        if (!obj) return WrapperValue::createDefault(dataType);
+        
+        SymbolTable* classScope = mgr->findClassScope(obj->type);
+        if (!classScope) return WrapperValue::createDefault(dataType);
+        
+        SymbolInfo* field = classScope->findSymbolLocal(fieldName);
+        if (!field) return WrapperValue::createDefault(dataType);
+        
+        WrapperValue w;
+        w.type = dataType;
+        if (dataType == "BOI") w.intVal = field->value.empty() ? 0 : stoi(field->value);
+        else if (dataType == "WIGGLY") w.floatVal = field->value.empty() ? 0.0 : stof(field->value);
+        else if (dataType == "YAP") w.strVal = field->value;
+        else if (dataType == "TRUTHMODE") w.boolVal = (field->value == "1");
+        
+        return w;
+    }
+};
+
+// --- Node for Variable Declaration ---
+class VarDeclNode : public ASTNode {
+    string varName;
+    string varType;
+    ASTNode* initExpr;  // nullptr if no initialization
+public:
+    VarDeclNode(string name, string type, ASTNode* init = nullptr) 
+        : varName(name), varType(type), initExpr(init) {
+        dataType = "BLACK";  // Variable declarations don't return values
+    }
+    
+    WrapperValue eval(SymbolTableManager* mgr) override {
+        // Declare the variable in current scope
+        mgr->declareVariable(varName, varType, "variable");
+        
+        // If there's an initialization expression, evaluate and assign
+        if (initExpr) {
+            WrapperValue val = initExpr->eval(mgr);
+            SymbolInfo* s = mgr->getSymbol(varName);
+            if (s) {
+                if (s->type == "BOI") s->value = to_string(val.intVal);
+                else if (s->type == "WIGGLY") s->value = to_string(val.floatVal);
+                else if (s->type == "YAP") s->value = val.strVal;
+                else if (s->type == "TRUTHMODE") s->value = val.boolVal ? "1" : "0";
+            }
+        }
+        return WrapperValue();
+    }
+    
+    ~VarDeclNode() { if (initExpr) delete initExpr; }
+};
+
+// --- Node for "Other" (when function execution not supported) ---
 class OtherNode : public ASTNode {
 public:
     OtherNode(string t) { dataType = t; }
@@ -115,6 +181,60 @@ public:
     ~AssignNode() { delete expr; }
 };
 
+// --- Node for Field Assignment (obj.field = expr) ---
+class FieldAssignNode : public ASTNode {
+    string objName;
+    string fieldName;
+    ASTNode* expr;
+public:
+    FieldAssignNode(string obj, string field, ASTNode* e) : objName(obj), fieldName(field), expr(e) {
+        if(e) dataType = e->dataType;
+    }
+    
+    WrapperValue eval(SymbolTableManager* mgr) override {
+        if (!expr) return WrapperValue();
+        WrapperValue res = expr->eval(mgr);
+        
+        SymbolInfo* obj = mgr->getSymbol(objName);
+        if (!obj) return res;
+        
+        SymbolTable* classScope = mgr->findClassScope(obj->type);
+        if (!classScope) return res;
+        
+        SymbolInfo* field = classScope->findSymbolLocal(fieldName);
+        if (field) {
+            if (field->type == "BOI") field->value = to_string(res.intVal);
+            else if (field->type == "WIGGLY") field->value = to_string(res.floatVal);
+            else if (field->type == "YAP") field->value = res.strVal;
+            else if (field->type == "TRUTHMODE") field->value = res.boolVal ? "1" : "0";
+        }
+        return res;
+    }
+    ~FieldAssignNode() { delete expr; }
+};
+
+// --- Node for Return Statement ---
+class ReturnNode : public ASTNode {
+    ASTNode* expr;
+public:
+    ReturnNode(ASTNode* e) : expr(e) { 
+        if (e) dataType = e->dataType;
+        else dataType = "BLACK";
+    }
+    
+    WrapperValue eval(SymbolTableManager* mgr) override {
+        if (expr) {
+            WrapperValue res = expr->eval(mgr);
+            res.isReturn = true;  // Mark as return
+            return res;
+        }
+        WrapperValue res;
+        res.isReturn = true;
+        return res;
+    }
+    ~ReturnNode() { if (expr) delete expr; }
+};
+
 // --- Node for Print ---
 class PrintNode : public ASTNode {
     ASTNode* expr;
@@ -132,76 +252,72 @@ public:
     ~PrintNode() { delete expr; }
 };
 
-// --- Node for Binary Operations ---
-class BinOpNode : public ASTNode {
-    ASTNode *left, *right;
-    int op; // Token ID (e.g. '+', OP_AND)
+// --- Node for Function Calls (NEW - Executes function bodies) ---
+class FunctionCallNode : public ASTNode {
+    string funcName;
+    vector<ASTNode*> arguments;
+    vector<string> paramNames;
+    
 public:
-    BinOpNode(ASTNode* l, ASTNode* r, int o) : left(l), right(r), op(o) {}
+    FunctionCallNode(string name, vector<ASTNode*> args, vector<string> params, string retType) 
+        : funcName(name), arguments(args), paramNames(params) {
+        dataType = retType;
+    }
     
     WrapperValue eval(SymbolTableManager* mgr) override {
-        WrapperValue l = left->eval(mgr);
-        WrapperValue r = right->eval(mgr);
-        WrapperValue res; 
-        
-        // Assume semantic checks ensured types match (or logicals allow it)
-        res.type = dataType; // Set by parser
-
-        if (op == '+') {
-            if (l.type == "BOI") res = WrapperValue::createInt(l.intVal + r.intVal);
-            else if (l.type == "WIGGLY") res = WrapperValue::createFloat(l.floatVal + r.floatVal);
-            else if (l.type == "YAP") res = WrapperValue::createString(l.strVal + r.strVal);
-        } else if (op == '-') {
-            if (l.type == "BOI") res = WrapperValue::createInt(l.intVal - r.intVal);
-            else if (l.type == "WIGGLY") res = WrapperValue::createFloat(l.floatVal - r.floatVal);
-        } else if (op == '*') {
-            if (l.type == "BOI") res = WrapperValue::createInt(l.intVal * r.intVal);
-            else if (l.type == "WIGGLY") res = WrapperValue::createFloat(l.floatVal * r.floatVal);
-        } else if (op == '/') {
-            if (l.type == "BOI" && r.intVal != 0) res = WrapperValue::createInt(l.intVal / r.intVal);
-            else if (l.type == "WIGGLY" && r.floatVal != 0) res = WrapperValue::createFloat(l.floatVal / r.floatVal);
-        } 
-        // Boolean Ops
-        // Note: For parsing convenience, tokens like OP_AND are passed as is
-        // We need to know the int values of these tokens from limbaj.tab.h but we can't include it easily here due to cycles.
-        // We will trust the Op code passed in constructor.
-        // Logic operations return TRUTHMODE
-        else {
-             // Basic comparison logic impl
-             bool b = false;
-             // Helper for comparisons to avoid massive switch
-             // Assuming op codes map to what bison defines. 
-             // We can use the 'dataType' of children to decide how to compare
-             
-             if (left->dataType == "BOI") {
-                 // compare ints
-                 // Note: This is simplified. In a real project we'd map tokens clearly.
-             }
+        // Find the function in symbol table
+        SymbolInfo* func = mgr->getSymbol(funcName);
+        if (!func || !func->funcBody) {
+            return WrapperValue::createDefault(dataType);
         }
         
-        // Implementing logic based on the specific required ops for Step IV
-        // Since we can't easily access token enums here without circular deps, 
-        // we'll implement the logic in the Parser action where we create the specific subclass or 
-        // we just handle basic + - * / and treat others generic or use simple integer constants if valid.
-        // For the sake of this assignment, I'll rely on the parser setting the specific result.
+        // Create new scope for function execution
+        mgr->enterScope(funcName + "_call");
         
-        // Actually, let's implement the logic properly by numeric mapping if possible, 
-        // OR better: define the logic inline here.
-        // For boolean ops, result is TRUTHMODE.
-        return res;
+        // Pass parameters: create local variables with argument values
+        for (size_t i = 0; i < arguments.size() && i < paramNames.size(); i++) {
+            // Evaluate argument
+            WrapperValue argVal = arguments[i]->eval(mgr);
+            
+            // Declare parameter variable in function scope
+            mgr->declareVariable(paramNames[i], func->paramTypes[i], "parameter");
+            
+            // Set its value
+            SymbolInfo* param = mgr->getSymbol(paramNames[i]);
+            if (param) {
+                if (param->type == "BOI") param->value = to_string(argVal.intVal);
+                else if (param->type == "WIGGLY") param->value = to_string(argVal.floatVal);
+                else if (param->type == "YAP") param->value = argVal.strVal;
+                else if (param->type == "TRUTHMODE") param->value = argVal.boolVal ? "1" : "0";
+            }
+        }
+        
+        // Execute function body
+        WrapperValue result = WrapperValue::createDefault(dataType);
+        for (ASTNode* stmt : *(func->funcBody)) {
+            if (stmt) {
+                WrapperValue stmtResult = stmt->eval(mgr);
+                // Check for return statement
+                if (stmtResult.isReturn) {
+                    result = stmtResult;
+                    result.isReturn = false;  // Clear flag
+                    break;
+                }
+            }
+        }
+        
+        mgr->exitScope();
+        return result;
     }
-
-    // Overload for specific Ops where we know the implementation
-    // But since `op` is just an int, we'd need the definitions.
-    // Instead, I'll implement a flexible eval in `limbaj.y`'s node creation? No, logic must be here.
-    // I will assume standard ASCII for single chars and handle named tokens generically or specific cases.
     
-    // RE-IMPLEMENTATION: Simple logic for + - * / is above.
-    // For relational/logical, we need the token values. 
-    // I will add public methods to set operation type or subclass.
+    ~FunctionCallNode() {
+        for (auto arg : arguments) {
+            delete arg;
+        }
+    }
 };
 
-// Specialized Binary Nodes to avoid token dependency issues in AST.h
+// --- Specialized Binary Nodes ---
 class AddNode : public ASTNode {
     ASTNode *left, *right;
 public:
@@ -214,6 +330,7 @@ public:
         if(dataType == "YAP") return WrapperValue::createString(l.strVal + r.strVal);
         return WrapperValue();
     }
+    ~AddNode() { delete left; delete right; }
 };
 
 class SubNode : public ASTNode {
@@ -227,6 +344,7 @@ public:
         if(dataType == "WIGGLY") return WrapperValue::createFloat(l.floatVal - r.floatVal);
         return WrapperValue();
     }
+    ~SubNode() { delete left; delete right; }
 };
 
 class MulNode : public ASTNode {
@@ -240,6 +358,7 @@ public:
         if(dataType == "WIGGLY") return WrapperValue::createFloat(l.floatVal * r.floatVal);
         return WrapperValue();
     }
+    ~MulNode() { delete left; delete right; }
 };
 
 class DivNode : public ASTNode {
@@ -249,16 +368,29 @@ public:
     WrapperValue eval(SymbolTableManager* mgr) override {
         WrapperValue l = left->eval(mgr);
         WrapperValue r = right->eval(mgr);
-        if(dataType == "BOI") return WrapperValue::createInt(r.intVal ? l.intVal / r.intVal : 0);
-        if(dataType == "WIGGLY") return WrapperValue::createFloat(r.floatVal ? l.floatVal / r.floatVal : 0);
+        if(dataType == "BOI") {
+            if (r.intVal == 0) {
+                cerr << "Runtime Error: Division by zero!" << endl;
+                return WrapperValue::createInt(0);
+            }
+            return WrapperValue::createInt(l.intVal / r.intVal);
+        }
+        if(dataType == "WIGGLY") {
+            if (r.floatVal == 0.0) {
+                cerr << "Runtime Error: Division by zero!" << endl;
+                return WrapperValue::createFloat(0.0);
+            }
+            return WrapperValue::createFloat(l.floatVal / r.floatVal);
+        }
         return WrapperValue();
     }
+    ~DivNode() { delete left; delete right; }
 };
 
 // Logic/Compare Node
 class LogicNode : public ASTNode {
     ASTNode *left, *right;
-    string opName; // "AND", "OR", "EQ", "NEQ", "LT", "GT"
+    string opName; // "AND", "OR", "EQ", "NEQ", "LT", "GT", "LE", "GE"
 public:
     LogicNode(ASTNode* l, ASTNode* r, string op) : left(l), right(r), opName(op) { dataType = "TRUTHMODE"; }
     WrapperValue eval(SymbolTableManager* mgr) override {
@@ -269,9 +401,7 @@ public:
         if (opName == "AND") res = l.boolVal && r.boolVal;
         else if (opName == "OR") res = l.boolVal || r.boolVal;
         else {
-            // Comparisons
-            // Need to know operand type to compare correctly
-            string opType = left->dataType; // Assume left==right due to semantic check
+            string opType = left->dataType;
             if (opName == "EQ") {
                 if (opType == "BOI") res = (l.intVal == r.intVal);
                 else if (opType == "WIGGLY") res = (l.floatVal == r.floatVal);
@@ -279,7 +409,7 @@ public:
                 else if (opType == "YAP") res = (l.strVal == r.strVal);
             }
             else if (opName == "NEQ") {
-                 if (opType == "BOI") res = (l.intVal != r.intVal);
+                if (opType == "BOI") res = (l.intVal != r.intVal);
                 else if (opType == "WIGGLY") res = (l.floatVal != r.floatVal);
                 else if (opType == "TRUTHMODE") res = (l.boolVal != r.boolVal);
                 else if (opType == "YAP") res = (l.strVal != r.strVal);
@@ -292,11 +422,18 @@ public:
                 if (opType == "BOI") res = (l.intVal > r.intVal);
                 else if (opType == "WIGGLY") res = (l.floatVal > r.floatVal);
             }
+            else if (opName == "LE") {
+                if (opType == "BOI") res = (l.intVal <= r.intVal);
+                else if (opType == "WIGGLY") res = (l.floatVal <= r.floatVal);
+            }
+            else if (opName == "GE") {
+                if (opType == "BOI") res = (l.intVal >= r.intVal);
+                else if (opType == "WIGGLY") res = (l.floatVal >= r.floatVal);
+            }
         }
         return WrapperValue::createBool(res);
     }
+    ~LogicNode() { delete left; delete right; }
 };
-
-
 
 #endif

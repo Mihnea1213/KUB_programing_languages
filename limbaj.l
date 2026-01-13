@@ -1,6 +1,7 @@
 %{
     #include <iostream>
     #include <string>
+    #include <cstring>
     #include "limbaj.tab.h" // Token-urile din Bison
     using namespace std;
 %}
@@ -40,19 +41,20 @@
 }
 
 [0-9]+            { 
-    yylval.int_val = atoi(yytext); // <--- FIXED: Assign integer value
+    yylval.int_val = atoi(yytext);
     return VAL_INT; 
 }
 
 [0-9]*\.[0-9]+    { 
-    yylval.float_val = atof(yytext); // <--- FIXED: Assign float value
+    yylval.float_val = atof(yytext);
     return VAL_FLOAT; 
 }
 
 \"[^\"]*\"        { 
-    // We duplicate yytext (which includes quotes). 
-    // Ideally you might want to strip quotes here, but strdup is sufficient to pass data.
-    yylval.str_val = strdup(yytext); // <--- FIXED: Assign string value
+    // Strip quotes from string literals
+    char* temp = strdup(yytext + 1); // Skip opening quote
+    temp[strlen(temp) - 1] = '\0';    // Remove closing quote
+    yylval.str_val = temp;
     return VAL_STRING; 
 }
 

@@ -11,26 +11,33 @@
     extern FILE* yyin;
     void yyerror(const char* s);
 
-    /*Declaram managerul de tabele */
     SymbolTableManager* manager;
 %}
 
 %code requires {
     #include <string>
     #include <vector>
-    #include "AST.h" 
+    #include "AST.h"
+    
+    // Structure to hold parameter information
+    struct ParamInfo {
+        std::string type;
+        std::string name;
+    };
 }
 
-/* Definim tipurile de date pe care le pot transporta regulile create*/
 %union {
     int int_val;
     float float_val;
     char* str_val; 
     std::vector<std::string>* str_vec;
     
-    // Step IV: AST types
     ASTNode* ast_node;
     std::vector<ASTNode*>* ast_vec;
+    
+    // NEW: For parameter info
+    ParamInfo* param_info;
+    std::vector<ParamInfo>* param_info_vec;
 }
 
 /* TOKEN-URILE */
@@ -45,13 +52,10 @@
 %token OP_EQ OP_NEQ OP_LE OP_GE OP_AND OP_OR
 
 %type <str_val> type 
-
-/* ASTNode* return types */
-%type <ast_node> expression function_call assignment statement control_stmt
-
-/* Vector types */
-%type <str_vec> param_list arg_list
-%type <ast_vec> main_body
+%type <ast_node> expression function_call assignment statement control_stmt var_decl_stmt
+%type <str_vec> arg_list
+%type <ast_vec> main_body function_body_statements arg_expr_list
+%type <param_info_vec> param_list_with_names
 
 /* Prioritati Operatori */
 %left OP_OR
@@ -63,17 +67,15 @@
 
 %%
 
-/* --- REGULI GRAMATICALE --- */
-
 program: global_declarations main_block
        ;
+       
 global_declarations: global_declarations global_decl
-                   |
-                   /* empty */
+                   | /* empty */
                    ;
+                   
 global_decl: class_decl
-           |
-           function_decl
+           | function_decl
            ;
 
 /* --- CLASE (PEPESSACK) --- */
@@ -82,28 +84,29 @@ class_decl: KEY_CLASS ID {
     manager->enterScope($2);
     }
     '{' class_body '}' ';' { 
-                manager->exitScope();
+        manager->exitScope();
     }
           ;
+          
 class_body: class_body class_member
-          |
-          /* empty */
+          | /* empty */
           ;
+          
 class_member: var_decl
-            |
-            function_decl
+            | function_decl
             ;
 
 /* --- TIPURI DE DATE --- */
 type: TYPE_INT { $$ = strdup("BOI"); }
-| TYPE_FLOAT { $$ = strdup("WIGGLY"); }
-| TYPE_STRING { $$ = strdup("YAP"); }
-| TYPE_BOOL { $$ = strdup("TRUTHMODE"); }
-| TYPE_VOID { $$ = strdup("BLACK"); }
-| ID { $$ = $1; } 
-;
+    | TYPE_FLOAT { $$ = strdup("WIGGLY"); }
+    | TYPE_STRING { $$ = strdup("YAP"); }
+    | TYPE_BOOL { $$ = strdup("TRUTHMODE"); }
+    | TYPE_VOID { $$ = strdup("BLACK"); }
+    | ID { $$ = $1; } 
+    ;
 
 /* --- VARIABILE --- */
+/* Regular var_decl for global/class scope (parse-time) */
 var_decl: type ID ';' {
     if (!manager->declareVariable($2, $1))
     {
@@ -130,67 +133,98 @@ var_decl: type ID ';' {
         }
         ;
 
-/* --- FUNCTII --- */
+/* NEW: var_decl_stmt for function scope (returns AST node for runtime execution) */
+var_decl_stmt: type ID ';' {
+    $$ = new VarDeclNode($2, $1, nullptr);
+}
+        | type ID '=' expression ';'
+        {
+            $$ = new VarDeclNode($2, $1, $4);
+        }
+        ;
+
+/* --- FUNCTII (ENHANCED) --- */
 function_decl: type ID {
     manager->declareFunction($2, $1, vector<string>());
     manager->enterScope($2);
     }
-    '(' param_list ')' {
-        if($5)
+    '(' param_list_with_names ')' {
+        if($5 && !$5->empty())
         {
-            manager->updateFunctionParams($2, *$5);
+            vector<string> types, names;
+            for(auto& p : *$5) {
+                types.push_back(p.type);
+                names.push_back(p.name);
+            }
+            manager->updateFunctionParams($2, types, names);
             delete $5;
         }
     }
-    '{' function_body '}' {
+    '{' function_body_statements '}' {
+        // Store function body
+        if ($9) {
+            manager->storeFunctionBody($2, $9);
+        }
         manager->exitScope();
     }
     ;
 
-param_list: param_list ',' type ID
+/* NEW: Parameter list with names */
+param_list_with_names: param_list_with_names ',' type ID
             {
                 $$ = $1;
-                $$->push_back($3);
+                ParamInfo p;
+                p.type = $3;
+                p.name = $4;
+                $$->push_back(p);
                 manager->declareVariable($4, $3, "parameter");
             }
-          |
-          type ID
+          | type ID
           {
-            $$ = new std::vector<std::string>();
-            $$->push_back($1);
+            $$ = new std::vector<ParamInfo>();
+            ParamInfo p;
+            p.type = $1;
+            p.name = $2;
+            $$->push_back(p);
             manager->declareVariable($2, $1, "parameter");
           }
-          | /* empty */ { $$ = new std::vector<std::string>();
+          | /* empty */ 
+          { 
+            $$ = new std::vector<ParamInfo>();
           }
           ;
 
-function_body: function_body statement { 
-                if ($2) delete $2; 
-             }
-             |
-             function_body var_decl 
-             |
-             /* empty */
-             ;
+/* NEW: Function body that captures AST */
+function_body_statements: function_body_statements statement { 
+        $$ = $1;
+        if ($2 != nullptr) {
+            $$->push_back($2);
+        }
+    }
+    | function_body_statements var_decl_stmt {
+        $$ = $1;
+        if ($2 != nullptr) {
+            $$->push_back($2);  // Now var declarations create AST nodes
+        }
+    }
+    | /* empty */ {
+        $$ = new std::vector<ASTNode*>();
+    }
+    ;
 
 /* --- MAIN BLOCK (THE_OP) --- */
-/* FIXED: Access main_body at $7 */
-main_block: TYPE_INT KEY_MAIN {
-    manager->enterScope("THE_OP_MAIN");
-}
-    '(' ')' '{' main_body '}' {
+main_block: TYPE_INT KEY_MAIN '(' ')' '{' main_body '}' {
+        manager->enterScope("THE_OP_MAIN");
         std::cout << "\n=== START EXECUTION ===\n";
-        // Check $7 because: $1=TYPE, $2=MAIN, $3=ACTION, $4=(, $5=), $6={, $7=main_body
-        if ($7) {
-            for (ASTNode* node : *($7)) {
+        if ($6) {
+            for (ASTNode* node : *($6)) {
                 if (node) {
                     node->eval(manager);
                 }
             }
-            delete $7;
+            delete $6;
         }
         std::cout << "=== END EXECUTION ===\n\n";
-
         manager->exitScope();
     }
           ;
@@ -202,8 +236,7 @@ main_body: main_body statement
                  $$->push_back($2);
              }
          }
-         |
-         /* empty */
+         | /* empty */
          {
              $$ = new std::vector<ASTNode*>();
          }
@@ -211,15 +244,20 @@ main_body: main_body statement
 
 /* --- STATEMENT-URI --- */
 statement: assignment { $$ = $1; }
-         |
-         control_stmt { $$ = nullptr; }
-         | function_call ';' { $$ = new OtherNode($1->dataType); delete $1; }
+         | control_stmt { $$ = $1; }
+         | function_call ';' { $$ = $1; }  // Now returns actual call node
          | KEY_PRINT '(' expression ')' ';'
          {
              $$ = new PrintNode($3);
          }
-         |
-         KEY_RETURN expression ';' { $$ = nullptr; delete $2; }
+         | KEY_RETURN expression ';' 
+         { 
+             $$ = new ReturnNode($2);  // Create return node
+         }
+         | KEY_RETURN ';'
+         {
+             $$ = new ReturnNode(nullptr);  // Void return
+         }
          ;
 
 assignment: ID '=' expression ';'
@@ -271,63 +309,112 @@ assignment: ID '=' expression ';'
                         {
                             yyerror(("Type error: Cannot assign " + $5->dataType + " to field " + field->type).c_str());
                         }
-                        $$ = new OtherNode("ASSIGN_FIELD"); 
-                        delete $5;
+                        $$ = new FieldAssignNode($1, $3, $5);
                     }
                 }
             }
           }
           ;
 
-control_stmt: KEY_IF '(' expression ')' '{' statement_list '}' { $$ = nullptr; delete $3; }
-            |
-            KEY_IF '(' expression ')' '{' statement_list '}' KEY_ELSE '{' statement_list '}' { $$ = nullptr; delete $3; }
-            |
-            KEY_WHILE '(' expression ')' '{' statement_list '}' { $$ = nullptr; delete $3; }
+control_stmt: KEY_IF '(' expression ')' '{' statement_list '}' 
+            { 
+                if ($3) {
+                    if ($3->dataType != "TRUTHMODE") {
+                        yyerror("IF condition must be of type TRUTHMODE (boolean)");
+                    }
+                    delete $3; 
+                }
+                $$ = nullptr; 
+            }
+            | KEY_IF '(' expression ')' '{' statement_list '}' KEY_ELSE '{' statement_list '}' 
+            { 
+                if ($3) {
+                    if ($3->dataType != "TRUTHMODE") {
+                        yyerror("IF condition must be of type TRUTHMODE (boolean)");
+                    }
+                    delete $3; 
+                }
+                $$ = nullptr; 
+            }
+            | KEY_WHILE '(' expression ')' '{' statement_list '}' 
+            { 
+                if ($3) {
+                    if ($3->dataType != "TRUTHMODE") {
+                        yyerror("WHILE condition must be of type TRUTHMODE (boolean)");
+                    }
+                    delete $3; 
+                }
+                $$ = nullptr; 
+            }
             ;
 
 statement_list: statement_list statement { if ($2) delete $2; }
-              |
-              /* empty */
+              | /* empty */
               ;
 
-function_call: ID '(' arg_list ')'
+/* --- FUNCTION CALL (ENHANCED) --- */
+function_call: ID '(' arg_expr_list ')'
             {
                 SymbolInfo* func = manager->getSymbol($1);
                 string resType = "ERROR";
+                vector<ASTNode*>* args = $3;
                 
                 if (!func) {
                     yyerror(("Function '" + string($1) + "' not defined!").c_str());
+                    if (args) {
+                        for (auto arg : *args) delete arg;
+                        delete args;
+                    }
+                    $$ = new OtherNode("ERROR");
+                } else if (func->scopeCategory != "function") {
+                    yyerror(("'" + string($1) + "' is not a function!").c_str());
+                    if (args) {
+                        for (auto arg : *args) delete arg;
+                        delete args;
+                    }
+                    $$ = new OtherNode("ERROR");
                 } else {
-                    if (func->scopeCategory != "function") {
-                        yyerror(("'" + string($1) + "' is not a function!").c_str());
+                    // Type check arguments
+                    if (func->paramTypes.size() != args->size()) {
+                        string err = "Function '" + string($1) + "' expects " + to_string(func->paramTypes.size()) + 
+                         " arguments, but got " + to_string(args->size());
+                        yyerror(err.c_str());
                     } else {
-                        if (func->paramTypes.size() != $3->size()) {
-                            string err = "Function '" + string($1) + "' expects " + to_string(func->paramTypes.size()) + 
-                             " arguments, but got " + to_string($3->size());
-                            yyerror(err.c_str());
-                        } else {
-                            bool ok = true;
-                            for(size_t i = 0; i < func->paramTypes.size(); ++i) {
-                                if (func->paramTypes[i] != (*$3)[i]) {
-                                    string err = "Arg " + to_string(i+1) + " type mismatch: expected " + 
-                                     func->paramTypes[i] + ", got " + (*$3)[i];
-                                    yyerror(err.c_str());
-                                    ok = false;
-                                }
+                        bool ok = true;
+                        for(size_t i = 0; i < args->size(); ++i) {
+                            if (func->paramTypes[i] != (*args)[i]->dataType) {
+                                string err = "Arg " + to_string(i+1) + " type mismatch: expected " + 
+                                 func->paramTypes[i] + ", got " + (*args)[i]->dataType;
+                                yyerror(err.c_str());
+                                ok = false;
                             }
-                            if(ok) resType = func->type;
                         }
+                        if(ok) resType = func->type;
+                    }
+                    
+                    // Create function call node that will execute the body
+                    if (resType != "ERROR") {
+                        vector<ASTNode*> argVec;
+                        if (args) {
+                            argVec = *args;
+                            delete args;  // Delete the vector wrapper but keep nodes
+                        }
+                        $$ = new FunctionCallNode($1, argVec, func->paramNames, resType);
+                    } else {
+                        if (args) {
+                            for (auto arg : *args) delete arg;
+                            delete args;
+                        }
+                        $$ = new OtherNode(resType);
                     }
                 }
-                delete $3;
-                $$ = new OtherNode(resType);
             }
-             |
-             ID '.' ID '(' arg_list ')'
+             | ID '.' ID '(' arg_expr_list ')'
              {
                 string resType = "ERROR";
                 SymbolInfo* obj = manager->getSymbol($1);
+                vector<ASTNode*>* args = $5;
+                
                 if (!obj) {
                     yyerror(("Object '" + string($1) + "' not found!").c_str());
                 } else {
@@ -337,123 +424,140 @@ function_call: ID '(' arg_list ')'
                     } else {
                         SymbolInfo* method = classScope->findSymbolLocal($3);
                         if (!method) {
-                        yyerror(("Method '" + string($3) + "' not defined in class " + obj->type).c_str());
+                            yyerror(("Method '" + string($3) + "' not defined in class " + obj->type).c_str());
+                        } else if (method->scopeCategory != "function") {
+                            yyerror(("Member '" + string($3) + "' is not a function!").c_str());
                         } else {
-                            if (method->scopeCategory != "function") {
-                                yyerror(("Member '" + string($3) + "' is not a function!").c_str());
+                            if (method->paramTypes.size() != args->size()) {
+                                string err = "Method '" + string($3) + "' expects " + to_string(method->paramTypes.size()) + 
+                                 " arguments, but got " + to_string(args->size());
+                                yyerror(err.c_str());
                             } else {
-                                if (method->paramTypes.size() != $5->size()) {
-                                    string err = "Method '" + string($3) + "' expects " + to_string(method->paramTypes.size()) + 
-                                     " arguments, but got " + to_string($5->size());
-                                    yyerror(err.c_str());
-                                } else {
-                                    bool ok = true;
-                                    for(size_t i = 0; i < method->paramTypes.size(); ++i) {
-                                        if (method->paramTypes[i] != (*$5)[i]) {
-                                            string err = "Arg " + to_string(i+1) + " type mismatch in method call: expected " + 
-                                            method->paramTypes[i] + ", got " + (*$5)[i];
-                                            yyerror(err.c_str());
-                                            ok = false;
-                                        }
+                                bool ok = true;
+                                for(size_t i = 0; i < args->size(); ++i) {
+                                    if (method->paramTypes[i] != (*args)[i]->dataType) {
+                                        string err = "Arg " + to_string(i+1) + " type mismatch: expected " + 
+                                        method->paramTypes[i] + ", got " + (*args)[i]->dataType;
+                                        yyerror(err.c_str());
+                                        ok = false;
                                     }
-                                    if(ok) resType = method->type;
                                 }
+                                if(ok) resType = method->type;
                             }
                         }
                     }
                 }
-                delete $5;
+                
+                if (args) {
+                    for (auto arg : *args) delete arg;
+                    delete args;
+                }
                 $$ = new OtherNode(resType);
              }
              ;
 
+/* NEW: Argument list with expressions (not just types) */
+arg_expr_list: arg_expr_list ',' expression
+        {
+            $$ = $1;
+            $$->push_back($3);
+        }
+        | expression
+        {
+           $$ = new std::vector<ASTNode*>();
+           $$->push_back($1);
+        }
+        | /* empty */
+        {
+            $$ = new std::vector<ASTNode*>();
+        }
+        ;
+
+/* OLD: Type-only arg list (kept for compatibility, not used) */
 arg_list: arg_list ',' expression
         {
             $$ = $1;
             $$->push_back($3->dataType);
             delete $3;
         }
-        |
-        expression
+        | expression
         {
            $$ = new std::vector<std::string>();
            $$->push_back($1->dataType); 
            delete $1;
         }
-        |
-        /* empty */
+        | /* empty */
         {
             $$ = new std::vector<std::string>();
         }
         ;
 
-/* --- EXPRESII CU VERIFICARE SEMANTICA--- */
+/* --- EXPRESII --- */
 expression: expression '+' expression
             {
                 if ($1->dataType == $3->dataType) { $$ = new AddNode($1, $3); }
-                else { yyerror("Type mismatch: Cannot add different types!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch: Cannot add different types!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
             }
-          |
-          expression '-' expression
+          | expression '-' expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new SubNode($1, $3); }
-                else { yyerror("Type mismatch: Cannot subtract different types!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch: Cannot subtract different types!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          expression '*' expression
+          | expression '*' expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new MulNode($1, $3); }
-                else { yyerror("Type mismatch: Cannot multiply different types!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch: Cannot multiply different types!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          expression '/' expression
+          | expression '/' expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new DivNode($1, $3); }
-                else { yyerror("Type mismatch: Cannot divide different types!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch: Cannot divide different types!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          expression OP_AND expression
+          | expression OP_AND expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new LogicNode($1, $3, "AND"); }
-                else { yyerror("Type mismatch in AND operation!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch in AND operation!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          expression OP_OR expression
+          | expression OP_OR expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new LogicNode($1, $3, "OR"); }
-                else { yyerror("Type mismatch in OR operation!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch in OR operation!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          expression OP_EQ expression
+          | expression OP_EQ expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new LogicNode($1, $3, "EQ"); }
-                else { yyerror("Type mismatch in comparison!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch in comparison!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          expression OP_NEQ expression
+          | expression OP_NEQ expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new LogicNode($1, $3, "NEQ"); }
-                else { yyerror("Type mismatch in comparison!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch in comparison!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          expression '<' expression
+          | expression '<' expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new LogicNode($1, $3, "LT"); }
-                else { yyerror("Type mismatch in < comparison!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch in < comparison!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          expression '>' expression
+          | expression '>' expression
           {
                 if ($1->dataType == $3->dataType) { $$ = new LogicNode($1, $3, "GT"); }
-                else { yyerror("Type mismatch in > comparison!"); $$ = new OtherNode("ERROR"); }
+                else { yyerror("Type mismatch in > comparison!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
           }
-          |
-          '(' expression ')'
+          | expression OP_LE expression
+          {
+                if ($1->dataType == $3->dataType) { $$ = new LogicNode($1, $3, "LE"); }
+                else { yyerror("Type mismatch in <= comparison!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
+          }
+          | expression OP_GE expression
+          {
+                if ($1->dataType == $3->dataType) { $$ = new LogicNode($1, $3, "GE"); }
+                else { yyerror("Type mismatch in >= comparison!"); $$ = new OtherNode("ERROR"); delete $1; delete $3; }
+          }
+          | '(' expression ')'
           {
             $$ = $2;
           }
-          |
-          ID
+          | ID
           {
             SymbolInfo* s = manager->getSymbol($1);
             if (s) { $$ = new IdNode($1, s->type); }
@@ -463,8 +567,7 @@ expression: expression '+' expression
                 $$ = new OtherNode("ERROR");
             }
           }
-          |
-          ID '.' ID
+          | ID '.' ID
           {
             SymbolInfo* obj = manager->getSymbol($1);
             string resType = "ERROR";
@@ -483,20 +586,18 @@ expression: expression '+' expression
                     }
                 }
             }
-            $$ = new OtherNode(resType);
+            if (resType != "ERROR") {
+                $$ = new FieldAccessNode($1, $3, resType);
+            } else {
+                $$ = new OtherNode(resType);
+            }
           }
-          |
-          function_call { $$ = $1; }
-          |
-          VAL_INT { $$ = new ConstNode(WrapperValue::createInt($1)); }
-          |
-          VAL_FLOAT { $$ = new ConstNode(WrapperValue::createFloat($1)); }
-          |
-          VAL_STRING { $$ = new ConstNode(WrapperValue::createString($1)); }
-          |
-          VAL_TRUE { $$ = new ConstNode(WrapperValue::createBool(true)); }
-          |
-          VAL_FALSE { $$ = new ConstNode(WrapperValue::createBool(false)); }
+          | function_call { $$ = $1; }
+          | VAL_INT { $$ = new ConstNode(WrapperValue::createInt($1)); }
+          | VAL_FLOAT { $$ = new ConstNode(WrapperValue::createFloat($1)); }
+          | VAL_STRING { $$ = new ConstNode(WrapperValue::createString($1)); }
+          | VAL_TRUE { $$ = new ConstNode(WrapperValue::createBool(true)); }
+          | VAL_FALSE { $$ = new ConstNode(WrapperValue::createBool(false)); }
           ;
 
 %%
@@ -519,5 +620,6 @@ int main(int argc, char** argv) {
     std::cout << "GIGACHAD: Parsare completa cu succes! Generez tables.txt ..." << std::endl;
     manager->printAllTables("tables.txt");
 
+    delete manager;
     return 0;
 }
