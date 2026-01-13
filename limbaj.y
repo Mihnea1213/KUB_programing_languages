@@ -12,6 +12,8 @@
     void yyerror(const char* s);
 
     SymbolTableManager* manager;
+
+    bool hasErrors = false;
 %}
 
 %code requires {
@@ -606,6 +608,7 @@ expression: expression '+' expression
 %%
 
 void yyerror(const char* s) {
+    hasErrors = true;
     std::cerr << "CRINGE ERROR (Syntax): " << s << std::endl;
 }
 
@@ -619,7 +622,29 @@ int main(int argc, char** argv) {
 
     manager = new SymbolTableManager();
     yyparse();
+
+    if (hasErrors) {
+        std::cout << "--------------------------------------" << std::endl;
+        std::cout << "CRINGE: Programul contine erori si nu poate fi executat!" << std::endl;
+
+        // Clean up function bodies (done here where ASTNode is fully defined)
+    for (auto* body : manager->getFuncBodies()) {
+        if (body) {
+            for (auto* node : *body) {
+                delete node;
+            }
+            delete body;
+        }
+    }
+
+    delete manager;
+    fclose(myfile);
     
+        /* Oprim totul aici */
+        return 0; 
+    }
+    else
+    {
     std::cout << "GIGACHAD: Parsare completa cu succes! Generez tables.txt ..." << std::endl;
     manager->printAllTables("tables.txt");
 
@@ -636,4 +661,5 @@ int main(int argc, char** argv) {
     delete manager;
     fclose(myfile);
     return 0;
+    }
 }

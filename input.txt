@@ -59,6 +59,7 @@ BOI THE_OP() {
     /* 2. Test Function Calls & Assignments */
     test_calculations();
     test_logic();
+    test_logic(10);
 
     SHOUT("=== TEST COMPLETE ===");
     YEET 0;
