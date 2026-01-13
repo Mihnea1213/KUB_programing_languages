@@ -20,16 +20,13 @@ struct SymbolInfo
     string scopeCategory;
     int size;
     vector<string> paramTypes;
-    vector<string> paramNames;  // NEW: Store parameter names for function calls
+    vector<string> paramNames;  // Store parameter names for function calls
     vector<ASTNode*>* funcBody = nullptr;
     
     SymbolInfo() : name(""), type(""), value(""), scopeCategory(""), size(0) {}
     
     SymbolInfo(string n, string t, string v = "", string cat = "variable")
         : name(n), type(t), value(v), scopeCategory(cat), size(0) {}
-    
-    // Note: funcBody cleanup is handled by SymbolTable destructor
-    // to avoid circular dependency issues
 };
 
 class SymbolTable
@@ -135,8 +132,6 @@ public:
 
     ~SymbolTable()
     {
-        // Note: Function body cleanup happens in SymbolTableManager
-        // to avoid circular dependency with ASTNode
         for (auto child : children)
         {
             delete child;
@@ -149,6 +144,9 @@ class SymbolTableManager
 public:
     SymbolTable* globalScope;
     SymbolTable* currentScope;
+    
+    // Store all function body pointers for cleanup
+    vector<vector<ASTNode*>*> allFuncBodies;
 
     SymbolTableManager() {
         globalScope = new SymbolTable("Global");
@@ -198,7 +196,7 @@ public:
         }
     }
     
-    // NEW: Store function body
+    // Store function body
     void storeFunctionBody(string name, vector<ASTNode*>* body)
     {
         SymbolTable* searchScope = currentScope->parent;
@@ -208,6 +206,8 @@ public:
             if(it != searchScope->symbols.end())
             {
                 it->second.funcBody = body;
+                // Track for later cleanup
+                allFuncBodies.push_back(body);
             }
         }
     }
@@ -239,32 +239,15 @@ public:
         }
     }
     
-    ~SymbolTableManager() {
-        // Clean up function bodies before deleting globalScope
-        cleanupFunctionBodies(globalScope);
-        delete globalScope;
+    // Get all function bodies for cleanup (called from main where ASTNode is defined)
+    vector<vector<ASTNode*>*>& getFuncBodies() {
+        return allFuncBodies;
     }
     
-private:
-    // Helper to clean up function bodies recursively
-    void cleanupFunctionBodies(SymbolTable* table) {
-        if (!table) return;
-        
-        // Clean up function bodies in this scope
-        for (auto& [key, val] : table->symbols) {
-            if (val.funcBody) {
-                for (auto node : *(val.funcBody)) {
-                    delete node;
-                }
-                delete val.funcBody;
-                val.funcBody = nullptr;
-            }
-        }
-        
-        // Recursively clean up children
-        for (auto child : table->children) {
-            cleanupFunctionBodies(child);
-        }
+    ~SymbolTableManager() {
+        // Note: Function body AST nodes should be cleaned up in main()
+        // where ASTNode is fully defined. We just delete the scope tree here.
+        delete globalScope;
     }
 };
 

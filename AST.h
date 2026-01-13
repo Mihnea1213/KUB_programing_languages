@@ -18,7 +18,7 @@ struct WrapperValue {
     float floatVal = 0.0;
     string strVal = "";
     bool boolVal = false;
-    bool isReturn = false;  // NEW: Flag to indicate a return statement was executed
+    bool isReturn = false;  // Flag to indicate a return statement was executed
 
     WrapperValue() : type("BLACK"), isReturn(false) {}
     
@@ -114,19 +114,21 @@ public:
     }
 };
 
-// --- Node for Variable Declaration ---
-class VarDeclNode : public ASTNode {
+// --- Node for Variable Declaration at Runtime ---
+// This is used for function bodies: the variable was already declared at parse time
+// for semantic checking, but at runtime we need to declare it in the CALL scope
+class VarDeclNodeRuntime : public ASTNode {
     string varName;
     string varType;
-    ASTNode* initExpr;  // nullptr if no initialization
+    ASTNode* initExpr;
 public:
-    VarDeclNode(string name, string type, ASTNode* init = nullptr) 
+    VarDeclNodeRuntime(string name, string type, ASTNode* init = nullptr) 
         : varName(name), varType(type), initExpr(init) {
         dataType = "BLACK";  // Variable declarations don't return values
     }
     
     WrapperValue eval(SymbolTableManager* mgr) override {
-        // Declare the variable in current scope
+        // Declare the variable in the CURRENT (runtime/call) scope
         mgr->declareVariable(varName, varType, "variable");
         
         // If there's an initialization expression, evaluate and assign
@@ -143,7 +145,7 @@ public:
         return WrapperValue();
     }
     
-    ~VarDeclNode() { if (initExpr) delete initExpr; }
+    ~VarDeclNodeRuntime() { if (initExpr) delete initExpr; }
 };
 
 // --- Node for "Other" (when function execution not supported) ---
@@ -252,7 +254,7 @@ public:
     ~PrintNode() { delete expr; }
 };
 
-// --- Node for Function Calls (NEW - Executes function bodies) ---
+// --- Node for Function Calls - Executes function bodies ---
 class FunctionCallNode : public ASTNode {
     string funcName;
     vector<ASTNode*> arguments;
@@ -276,7 +278,7 @@ public:
         
         // Pass parameters: create local variables with argument values
         for (size_t i = 0; i < arguments.size() && i < paramNames.size(); i++) {
-            // Evaluate argument
+            // Evaluate argument in CALLER's scope (before we set up params)
             WrapperValue argVal = arguments[i]->eval(mgr);
             
             // Declare parameter variable in function scope
@@ -300,7 +302,7 @@ public:
                 // Check for return statement
                 if (stmtResult.isReturn) {
                     result = stmtResult;
-                    result.isReturn = false;  // Clear flag
+                    result.isReturn = false;  // Clear flag for caller
                     break;
                 }
             }

@@ -35,7 +35,7 @@
     ASTNode* ast_node;
     std::vector<ASTNode*>* ast_vec;
     
-    // NEW: For parameter info
+    // For parameter info
     ParamInfo* param_info;
     std::vector<ParamInfo>* param_info_vec;
 }
@@ -53,7 +53,6 @@
 
 %type <str_val> type 
 %type <ast_node> expression function_call assignment statement control_stmt var_decl_stmt
-%type <str_vec> arg_list
 %type <ast_vec> main_body function_body_statements arg_expr_list
 %type <param_info_vec> param_list_with_names
 
@@ -106,7 +105,7 @@ type: TYPE_INT { $$ = strdup("BOI"); }
     ;
 
 /* --- VARIABILE --- */
-/* Regular var_decl for global/class scope (parse-time) */
+/* Regular var_decl for global/class scope (parse-time only) */
 var_decl: type ID ';' {
     if (!manager->declareVariable($2, $1))
     {
@@ -133,13 +132,31 @@ var_decl: type ID ';' {
         }
         ;
 
-/* NEW: var_decl_stmt for function scope (returns AST node for runtime execution) */
+/* FIX: var_decl_stmt for function scope - MUST declare in symbol table at parse time
+   AND create AST node for runtime execution */
 var_decl_stmt: type ID ';' {
-    $$ = new VarDeclNode($2, $1, nullptr);
+    /* Declare at parse time for semantic checking */
+    if (!manager->declareVariable($2, $1)) {
+        string err = "Variable '" + string($2) + "' already declared!";
+        yyerror(err.c_str());
+    }
+    /* Create AST node for runtime (uses VarDeclNodeRuntime which doesn't re-declare) */
+    $$ = new VarDeclNodeRuntime($2, $1, nullptr);
 }
         | type ID '=' expression ';'
         {
-            $$ = new VarDeclNode($2, $1, $4);
+            /* Declare at parse time for semantic checking */
+            if (!manager->declareVariable($2, $1)) {
+                string err = "Variable '" + string($2) + "' already declared!";
+                yyerror(err.c_str());
+            }
+            /* Type check */
+            if (strcmp($1, $4->dataType.c_str()) != 0 && strcmp($4->dataType.c_str(), "ERROR") != 0) {
+                string err = "Type error at initialization: Cannot assign " + $4->dataType + " to " + string($1);
+                yyerror(err.c_str());
+            }
+            /* Create AST node for runtime */
+            $$ = new VarDeclNodeRuntime($2, $1, $4);
         }
         ;
 
@@ -169,7 +186,7 @@ function_decl: type ID {
     }
     ;
 
-/* NEW: Parameter list with names */
+/* Parameter list with names */
 param_list_with_names: param_list_with_names ',' type ID
             {
                 $$ = $1;
@@ -194,7 +211,7 @@ param_list_with_names: param_list_with_names ',' type ID
           }
           ;
 
-/* NEW: Function body that captures AST */
+/* Function body that captures AST */
 function_body_statements: function_body_statements statement { 
         $$ = $1;
         if ($2 != nullptr) {
@@ -204,7 +221,7 @@ function_body_statements: function_body_statements statement {
     | function_body_statements var_decl_stmt {
         $$ = $1;
         if ($2 != nullptr) {
-            $$->push_back($2);  // Now var declarations create AST nodes
+            $$->push_back($2);
         }
     }
     | /* empty */ {
@@ -219,8 +236,13 @@ main_block: TYPE_INT KEY_MAIN '(' ')' '{' main_body '}' {
         if ($6) {
             for (ASTNode* node : *($6)) {
                 if (node) {
-                    node->eval(manager);
+                    WrapperValue result = node->eval(manager);
+                    if (result.isReturn) break;
                 }
+            }
+            // Clean up main_body AST nodes
+            for (ASTNode* node : *($6)) {
+                delete node;
             }
             delete $6;
         }
@@ -245,18 +267,18 @@ main_body: main_body statement
 /* --- STATEMENT-URI --- */
 statement: assignment { $$ = $1; }
          | control_stmt { $$ = $1; }
-         | function_call ';' { $$ = $1; }  // Now returns actual call node
+         | function_call ';' { $$ = $1; }
          | KEY_PRINT '(' expression ')' ';'
          {
              $$ = new PrintNode($3);
          }
          | KEY_RETURN expression ';' 
          { 
-             $$ = new ReturnNode($2);  // Create return node
+             $$ = new ReturnNode($2);
          }
          | KEY_RETURN ';'
          {
-             $$ = new ReturnNode(nullptr);  // Void return
+             $$ = new ReturnNode(nullptr);
          }
          ;
 
@@ -397,7 +419,7 @@ function_call: ID '(' arg_expr_list ')'
                         vector<ASTNode*> argVec;
                         if (args) {
                             argVec = *args;
-                            delete args;  // Delete the vector wrapper but keep nodes
+                            delete args;
                         }
                         $$ = new FunctionCallNode($1, argVec, func->paramNames, resType);
                     } else {
@@ -456,7 +478,7 @@ function_call: ID '(' arg_expr_list ')'
              }
              ;
 
-/* NEW: Argument list with expressions (not just types) */
+/* Argument list with expressions */
 arg_expr_list: arg_expr_list ',' expression
         {
             $$ = $1;
@@ -470,25 +492,6 @@ arg_expr_list: arg_expr_list ',' expression
         | /* empty */
         {
             $$ = new std::vector<ASTNode*>();
-        }
-        ;
-
-/* OLD: Type-only arg list (kept for compatibility, not used) */
-arg_list: arg_list ',' expression
-        {
-            $$ = $1;
-            $$->push_back($3->dataType);
-            delete $3;
-        }
-        | expression
-        {
-           $$ = new std::vector<std::string>();
-           $$->push_back($1->dataType); 
-           delete $1;
-        }
-        | /* empty */
-        {
-            $$ = new std::vector<std::string>();
         }
         ;
 
@@ -620,6 +623,17 @@ int main(int argc, char** argv) {
     std::cout << "GIGACHAD: Parsare completa cu succes! Generez tables.txt ..." << std::endl;
     manager->printAllTables("tables.txt");
 
+    // Clean up function bodies (done here where ASTNode is fully defined)
+    for (auto* body : manager->getFuncBodies()) {
+        if (body) {
+            for (auto* node : *body) {
+                delete node;
+            }
+            delete body;
+        }
+    }
+
     delete manager;
+    fclose(myfile);
     return 0;
 }
